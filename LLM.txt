@@ -1,0 +1,327 @@
+This is a complete, full-stack implementation using **Python (Flask)** for the backend and **HTML/JavaScript** for the frontend.
+
+This solution ensures **structured JSON output** from the Gemini API for reliable data extraction and analysis, as requested.
+
+### 1\. Project Setup (Backend - Python/Flask)
+
+First, set up your Python environment and dependencies.
+
+**a. Install Dependencies**
+
+```bash
+# Create and activate a virtual environment (optional but recommended)
+python3 -m venv venv
+source venv/bin/activate # On Windows, use: venv\Scripts\activate
+
+# Install the required libraries
+pip install Flask google-genai pydantic
+```
+
+**b. Set Your API Key**
+
+Create a file named `.env` in your project root and add your API key. You'll load this key in your Flask app.
+
+```ini
+# .env file
+GEMINI_API_KEY="YOUR_API_KEY_HERE"
+```
+
+**c. Backend Code (`app.py`)**
+
+Create a file named `app.py`. This code defines the JSON schema, handles the image upload, and calls the Gemini API to perform the analysis.
+
+```python
+import os
+import io
+import json
+from flask import Flask, request, jsonify, render_template
+from google import genai
+from google.genai import types
+from pydantic import BaseModel, Field
+from PIL import Image
+
+# --- 1. CONFIGURATION ---
+
+# Load API Key (In a real app, use a proper library like python-dotenv)
+# For simplicity here, we'll assume it's set in the environment or replace YOUR_KEY
+API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_API_KEY_HERE")
+if API_KEY == "YOUR_API_KEY_HERE":
+    print("Warning: Please set the GEMINI_API_KEY environment variable.")
+
+# Initialize the Gemini Client
+try:
+    client = genai.Client(api_key=API_KEY)
+except Exception as e:
+    print(f"Error initializing Gemini client: {e}")
+    client = None
+
+# List of major allergens to check against
+ALLERGENS = [
+    "Milk", "Egg", "Peanut", "Tree Nuts (Almonds, Cashews, Walnuts, Pecans, Pistachios)",
+    "Soy", "Wheat", "Fish", "Shellfish", "Sesame", "Mustard", "Sulphites"
+]
+ALLERGENS_STRING = ", ".join(ALLERGENS)
+
+# --- 2. JSON SCHEMA DEFINITION (Pydantic Model) ---
+
+class AllergenAnalysis(BaseModel):
+    """Defines the structured output for the Gemini API call."""
+    raw_ingredient_string: str = Field(
+        description="The full, unedited ingredient list text extracted from the image."
+    )
+    allergens_detected: list[str] = Field(
+        description=f"A list of all major allergens explicitly found in the ingredients. Check only for: {ALLERGENS_STRING}"
+    )
+    cross_contamination_warning: bool = Field(
+        description="True if phrases like 'May Contain', 'Traces of', or 'Manufactured on equipment...' are found; otherwise False."
+    )
+    is_safe_for_all: bool = Field(
+        description="True if both allergens_detected list is empty AND cross_contamination_warning is False; otherwise False."
+    )
+
+# --- 3. FLASK APPLICATION ---
+
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    """Renders the HTML upload form."""
+    return render_template('index.html')
+
+@app.route('/analyze', methods=['POST'])
+def analyze_label():
+    """Handles the image upload and calls the Gemini API."""
+    if client is None:
+        return jsonify({"error": "Gemini API Client not initialized. Check API Key."}), 500
+        
+    if 'food_label_image' not in request.files:
+        return jsonify({"error": "No image file provided"}), 400
+
+    file = request.files['food_label_image']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
+    try:
+        # Read the image data from the stream and prepare it for Gemini
+        img_bytes = file.read()
+        image = Image.open(io.BytesIO(img_bytes))
+
+        # --- Craft the Multimodal Prompt ---
+        system_instruction = (
+            "You are the 'Allery' Food Safety AI. Your goal is to accurately extract "
+            "ingredients and analyze all major food allergens from the provided image. "
+            "Your output MUST be a single JSON object that strictly adheres to the provided schema."
+        )
+
+        user_prompt = (
+            "Examine the food label image closely to perform OCR and analysis. \n\n"
+            "1. **Extract:** Find and return the *entire* ingredient list as a single string.\n"
+            "2. **Analyze:** Cross-reference the extracted ingredients against the "
+            f"following definitive list of major allergens: **{ALLERGENS_STRING}**.\n"
+            "3. **Warning:** Check the entire label for any 'May Contain', 'Traces of', "
+            "'Manufactured on equipment...', or similar cross-contamination warnings.\n"
+            "4. **Safety:** Determine final safety status based on findings.\n\n"
+            "Return the data only in the required JSON format."
+        )
+
+        # Gemini API Call with Structured Output
+        response = client.generate_content(
+            model='gemini-2.5-flash',  # Fast, multimodal model
+            contents=[image, user_prompt],
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                response_mime_type="application/json",
+                response_schema=AllergenAnalysis,  # Use the Pydantic model for schema
+                temperature=0.0  # Set low temperature for fact extraction
+            )
+        )
+        
+        # The response.text will be a valid JSON string matching the schema
+        # The SDK also provides response.parsed for Pydantic objects
+        
+        # Return the parsed JSON object
+        return jsonify(response.parsed.model_dump())
+
+    except Exception as e:
+        app.logger.error(f"Error during Gemini API call or processing: {e}")
+        return jsonify({"error": f"An unexpected error occurred: {e}"}), 500
+
+if __name__ == '__main__':
+    # Use environment port for deployment or default to 5000
+    port = int(os.environ.get('PORT', 5000))
+    # Note: Use `flask run` or a production WSGI server (like Gunicorn) in production
+    app.run(host='0.0.0.0', port=port, debug=True)
+
+```
+
+### 2\. Frontend Code (`templates/index.html`)
+
+Create a folder named `templates` and inside it, create a file named `index.html`. This provides the user interface for uploading the image and displaying the results.
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini Allergen Analyzer</title>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+        h1 { text-align: center; color: #4285F4; }
+        .upload-area { margin-bottom: 20px; padding: 15px; border: 2px dashed #ddd; border-radius: 5px; text-align: center; }
+        .result-box { border: 1px solid #eee; padding: 15px; border-radius: 5px; margin-top: 20px; }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #4285F4; border-radius: 50%; width: 20px; height: 20px; animation: spin 2s linear infinite; margin: 10px auto; display: none; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .alert-safe { background-color: #e6ffe6; border-left: 5px solid #00a800; padding: 10px; margin-top: 10px; }
+        .alert-caution { background-color: #fffae6; border-left: 5px solid #ffa500; padding: 10px; margin-top: 10px; }
+        .alert-danger { background-color: #ffe6e6; border-left: 5px solid #ff0000; padding: 10px; margin-top: 10px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; }
+        input[type="file"] { margin-bottom: 15px; }
+        button { background-color: #4285F4; color: white; padding: 10px 15px; border: none; border-radius: 5px; cursor: pointer; width: 100%; }
+        button:disabled { background-color: #ccc; }
+        #image-preview { max-width: 100%; height: auto; border: 1px solid #ddd; margin-top: 10px; display: none; }
+    </style>
+</head>
+<body>
+    <h1>Food Label Allergen Analyzer</h1>
+    <div class="upload-area">
+        <label for="food_label_image">Upload Food Label Image</label>
+        <input type="file" id="food_label_image" accept="image/*" required>
+        <img id="image-preview" src="#" alt="Image Preview" />
+        <button onclick="analyzeImage()" id="analyze-button">Analyze with Gemini</button>
+    </div>
+
+    <div id="loader" class="loader"></div>
+    
+    <div id="results" class="result-box" style="display: none;">
+        <h2>Analysis Results</h2>
+        <div id="safety-status"></div>
+        
+        <h3>Raw Ingredient List</h3>
+        <p id="raw-ingredients" style="white-space: pre-wrap; font-size: 0.9em; background: #f9f9f9; padding: 10px; border-radius: 4px;"></p>
+        
+        <h3>Detected Allergens</h3>
+        <ul id="detected-allergens"></ul>
+    </div>
+
+    <script>
+        document.getElementById('food_label_image').addEventListener('change', function(event) {
+            const preview = document.getElementById('image-preview');
+            const file = event.target.files[0];
+            if (file) {
+                preview.src = URL.createObjectURL(file);
+                preview.style.display = 'block';
+            } else {
+                preview.style.display = 'none';
+            }
+        });
+
+        async function analyzeImage() {
+            const fileInput = document.getElementById('food_label_image');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert("Please select an image file first.");
+                return;
+            }
+
+            const loader = document.getElementById('loader');
+            const resultsDiv = document.getElementById('results');
+            const button = document.getElementById('analyze-button');
+
+            // 1. UI State: Start Loading
+            resultsDiv.style.display = 'none';
+            loader.style.display = 'block';
+            button.disabled = true;
+            button.textContent = 'Analyzing...';
+            
+            // 2. Create FormData payload
+            const formData = new FormData();
+            formData.append('food_label_image', file);
+
+            try {
+                // 3. Send Request to Flask Backend
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // 4. Handle Success and Display Results
+                    displayResults(data);
+                } else {
+                    alert(`Analysis Error: ${data.error || 'Server returned an error.'}`);
+                }
+
+            } catch (error) {
+                console.error('Fetch error:', error);
+                alert('A network or processing error occurred. Check the server console.');
+            } finally {
+                // 5. UI State: Stop Loading
+                loader.style.display = 'none';
+                button.disabled = false;
+                button.textContent = 'Analyze with Gemini';
+            }
+        }
+
+        function displayResults(data) {
+            const resultsDiv = document.getElementById('results');
+            const safetyStatus = document.getElementById('safety-status');
+            const rawIngredients = document.getElementById('raw-ingredients');
+            const detectedAllergens = document.getElementById('detected-allergens');
+            
+            resultsDiv.style.display = 'block';
+            
+            // --- Safety Status Display ---
+            if (data.is_safe_for_all) {
+                safetyStatus.className = 'alert-safe';
+                safetyStatus.innerHTML = '<strong>✅ ALL CLEAR:</strong> No major allergens or contamination warnings detected.';
+            } else if (data.allergens_detected.length > 0) {
+                safetyStatus.className = 'alert-danger';
+                safetyStatus.innerHTML = '<strong>❌ DANGER:</strong> Explicit major allergens found!';
+            } else if (data.cross_contamination_warning) {
+                safetyStatus.className = 'alert-caution';
+                safetyStatus.innerHTML = '<strong>⚠️ CAUTION:</strong> Cross-contamination warning (e.g., "May Contain") found on the label.';
+            } else {
+                safetyStatus.className = 'alert-safe';
+                safetyStatus.innerHTML = '<strong>✅ APPARENTLY SAFE:</strong> Check raw ingredients for any other concerns.';
+            }
+
+
+            // --- Raw Ingredients ---
+            rawIngredients.textContent = data.raw_ingredient_string || 'Not found.';
+
+            // --- Detected Allergens List ---
+            detectedAllergens.innerHTML = ''; // Clear previous list
+            if (data.allergens_detected.length > 0) {
+                data.allergens_detected.forEach(allergen => {
+                    const li = document.createElement('li');
+                    li.textContent = `🚨 ${allergen}`;
+                    li.style.color = 'red';
+                    detectedAllergens.appendChild(li);
+                });
+            } else {
+                const li = document.createElement('li');
+                li.textContent = 'None of the major allergens detected.';
+                li.style.color = 'green';
+                detectedAllergens.appendChild(li);
+            }
+        }
+    </script>
+</body>
+</html>
+```
+
+### 3\. How to Run the Application
+
+1.  **Save the Files:** Ensure you have `app.py` in your root directory and `index.html` inside a folder named `templates`.
+2.  **Run the Flask App:**
+    ```bash
+    export GEMINI_API_KEY="YOUR_API_KEY_HERE" # Or use python-dotenv for production
+    python app.py
+    ```
+3.  **Access the App:** Open your web browser and navigate to `http://127.0.0.1:5000/`.
+
+You can now upload an image of a food label (like your uploaded `foodsample1.jpg` or `test2.jpg`) and click "Analyze with Gemini" to see the structured, real-time analysis..
