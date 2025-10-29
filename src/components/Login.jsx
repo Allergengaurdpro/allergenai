@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -67,7 +67,10 @@ const Login = () => {
         </form>
 
         <div className="login-footer">
-          <p>Secure access for authorized personnel only</p>
+          <p>
+            Don't have an account?{' '}
+            <Link to="/signup" className="link">Sign up</Link>
+          </p>
         </div>
       </div>
     </div>

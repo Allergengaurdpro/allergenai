@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs } from '../../config/mockFirebase';
-import { db } from '../../config/mockFirebase';
+import { collection, query, where, getDocs } from '../../config/firebase';
+import { db } from '../../config/firebase';
 import { getAllergenIcon } from '../../utils/allergenDetection';
 import '../../styles/scanning-allergens.css';
 

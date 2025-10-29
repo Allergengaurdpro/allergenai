@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, orderBy } from '../../config/mockFirebase';
-import { db } from '../../config/mockFirebase';
+import { collection, query, where, getDocs, orderBy } from '../../config/firebase';
+import { db } from '../../config/firebase';
 import '../../styles/scanning-allergens.css';
 
 const ScanningHistory = ({ receiverId }) => {
@@ -16,17 +16,24 @@ const ScanningHistory = ({ receiverId }) => {
 
   const loadHistory = async () => {
     try {
+      // Fetch without orderBy to avoid composite index requirement
       const q = query(
         collection(db, 'scanning_sessions'),
-        where('receiverId', '==', receiverId),
-        orderBy('createdAt', 'desc')
+        where('receiverId', '==', receiverId)
       );
       const snapshot = await getDocs(q);
       const sessionList = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
-      }));
+      }))
+      .sort((a, b) => {
+        // Sort by createdAt or startTime, descending (newest first)
+        const dateA = new Date(a.createdAt || a.startTime);
+        const dateB = new Date(b.createdAt || b.startTime);
+        return dateB - dateA;
+      });
       setSessions(sessionList);
+      console.log('Loaded history sessions:', sessionList);
     } catch (error) {
       console.error('Error loading history:', error);
     } finally {

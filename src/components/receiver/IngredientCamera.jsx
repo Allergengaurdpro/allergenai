@@ -6,24 +6,40 @@ const IngredientCamera = ({ onCapture, onClose }) => {
   const [stream, setStream] = useState(null);
   const [error, setError] = useState(null);
   const [capturedImage, setCapturedImage] = useState(null);
+  const capturedImageRef = useRef(null); // Track object URL for cleanup
 
   useEffect(() => {
     startCamera();
 
     return () => {
       stopCamera();
+      cleanupObjectURL();
     };
   }, []);
 
+  // Cleanup object URL when component unmounts or new image is captured
+  const cleanupObjectURL = () => {
+    if (capturedImageRef.current) {
+      URL.revokeObjectURL(capturedImageRef.current);
+      capturedImageRef.current = null;
+    }
+  };
+
   const startCamera = async () => {
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
+      // Detect if mobile device for optimized settings
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+      const constraints = {
         video: {
           facingMode: 'environment', // Use back camera on mobile
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
+          // Very low resolution for mobile to prevent memory issues and reloads
+          width: { ideal: isMobile ? 960 : 1920 },
+          height: { ideal: isMobile ? 720 : 1080 }
         }
-      });
+      };
+
+      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
 
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
@@ -39,6 +55,12 @@ const IngredientCamera = ({ onCapture, onClose }) => {
     if (stream) {
       stream.getTracks().forEach(track => track.stop());
     }
+    // Also stop any tracks from the video element
+    if (videoRef.current && videoRef.current.srcObject) {
+      const tracks = videoRef.current.srcObject.getTracks();
+      tracks.forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
   };
 
   const capturePhoto = () => {
@@ -47,33 +69,63 @@ const IngredientCamera = ({ onCapture, onClose }) => {
 
     if (video && canvas) {
       const context = canvas.getContext('2d');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+
+      // Detect if mobile device
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+      // Much smaller max size for mobile to prevent memory issues
+      const maxWidth = isMobile ? 1024 : 1920;
+      const maxHeight = isMobile ? 1024 : 1080;
+      let width = video.videoWidth;
+      let height = video.videoHeight;
+
+      // Scale down if too large
+      if (width > maxWidth) {
+        height = (height * maxWidth) / width;
+        width = maxWidth;
+      }
+      if (height > maxHeight) {
+        width = (width * maxHeight) / height;
+        height = maxHeight;
+      }
+
+      canvas.width = width;
+      canvas.height = height;
 
       // Draw video frame to canvas
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      context.drawImage(video, 0, 0, width, height);
 
-      // Convert canvas to blob
+      // Stop camera immediately after capture to free memory
+      stopCamera();
+
+      // Convert canvas to blob with aggressive compression for mobile
       canvas.toBlob((blob) => {
-        const file = new File([blob], 'ingredient-label.jpg', { type: 'image/jpeg' });
+        // Cleanup previous object URL
+        cleanupObjectURL();
+
         const imageUrl = URL.createObjectURL(blob);
+        capturedImageRef.current = imageUrl;
         setCapturedImage(imageUrl);
-      }, 'image/jpeg', 0.95);
+      }, 'image/jpeg', isMobile ? 0.7 : 0.85); // More aggressive compression for mobile
     }
   };
 
   const retakePhoto = () => {
+    cleanupObjectURL();
     setCapturedImage(null);
     startCamera();
   };
 
   const confirmPhoto = () => {
     const canvas = canvasRef.current;
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
     canvas.toBlob((blob) => {
       const file = new File([blob], 'ingredient-label.jpg', { type: 'image/jpeg' });
       onCapture(file, capturedImage);
       stopCamera();
-    }, 'image/jpeg', 0.95);
+      // Don't cleanup here as parent component will handle the URL
+    }, 'image/jpeg', isMobile ? 0.7 : 0.85); // Match the quality used in capture
   };
 
   return (

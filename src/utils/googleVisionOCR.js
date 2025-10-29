@@ -44,44 +44,105 @@ export const extractTextWithGemini = async (imageFile, geminiApiKey) => {
               items: { type: 'string' },
               description: 'ALL Canadian Priority Allergens found in EITHER English OR French text'
             },
+            allergen_warnings: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'All allergen warning statements found on the label (e.g., "Contains: Milk, Soy", "May contain traces of peanuts")'
+            },
             cross_contamination_warning: {
               type: 'boolean',
               description: 'True if "May Contain", "Traces of", "Manufactured on equipment" warnings found'
+            },
+            manufacturing_date: {
+              type: 'string',
+              description: 'Manufacturing date if found (in any format visible on label, e.g., MFG: 2024-01-15, or Best Before date)'
+            },
+            expiry_date: {
+              type: 'string',
+              description: 'Expiry or Best Before date if found (in any format visible on label)'
+            },
+            dietary_labels: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Dietary certifications/labels found (e.g., "Gluten Free", "Vegetarian", "Vegan", "Organic", "Kosher", "Halal", "Non-GMO", "Sugar Free", etc.)'
+            },
+            product_name: {
+              type: 'string',
+              description: 'Product name if clearly visible on the label'
+            },
+            brand_name: {
+              type: 'string',
+              description: 'Brand name if clearly visible on the label'
             },
             confidence: {
               type: 'number',
               description: 'Confidence score from 0 to 1'
             }
           },
-          required: ['raw_ingredient_string', 'allergens_detected', 'cross_contamination_warning', 'confidence']
+          required: ['raw_ingredient_string', 'allergens_detected', 'allergen_warnings', 'cross_contamination_warning', 'manufacturing_date', 'expiry_date', 'dietary_labels', 'product_name', 'brand_name', 'confidence']
         }
       }
     });
 
     const ALLERGENS_LIST = "Peanuts, Tree Nuts, Milk, Eggs, Fish, Shellfish, Soy, Wheat, Sesame, Mustard, Sulphites";
+    const DIETARY_LABELS = "Gluten Free, Vegetarian, Vegan, Organic, Kosher, Halal, Non-GMO, Sugar Free, Low Fat, Low Sodium, Dairy Free, Lactose Free, Nut Free, Keto, Paleo";
 
-    const prompt = `You are the 'Allery' Food Safety AI. Your goal is to accurately extract ingredients and analyze all major food allergens from the provided food label image. Your output MUST be a single JSON object that strictly adheres to the provided schema.
+    const prompt = `You are the 'Allery' Food Safety AI. Your mission is to perform COMPREHENSIVE analysis of the entire food label image. Scan EVERY part of the package - front, back, sides, nutritional panel, and ingredient list.
 
-Examine the food label image VERY CLOSELY to perform complete OCR and analysis.
+**YOUR OUTPUT MUST BE A SINGLE JSON OBJECT** that strictly follows the provided schema.
 
-CRITICAL INSTRUCTIONS:
-1. **Extract (BILINGUAL):** This is a CANADIAN bilingual label with BOTH English and French ingredients. You MUST extract the COMPLETE ingredient list from BOTH language sections. Include everything you see.
+ANALYZE THE ENTIRE LABEL IMAGE THOROUGHLY:
 
-2. **Analyze (CHECK BOTH LANGUAGES):** Cross-reference the extracted ingredients from BOTH English AND French text against this definitive list of Canadian Priority Allergens: ${ALLERGENS_LIST}
+1. **INGREDIENT EXTRACTION (BILINGUAL):**
+   - Extract the COMPLETE ingredient list from BOTH English AND French sections
+   - Include ALL ingredients, additives, preservatives, colors, flavors
+   - Look for ingredient lists on back panel, side panels, or nutritional information area
 
-   IMPORTANT ALLERGEN DETECTION RULES:
-   - Check BOTH English and French ingredient sections thoroughly
-   - English examples: "WHEAT FLOUR" = Wheat, "SOY PROTEIN" = Soy, "MILK POWDER" = Milk
-   - French examples: "FARINE DE BLÉ" = Wheat, "PROTÉINE DE SOYA" = Soy, "POUDRE DE LAIT" = Milk
-   - "HYDROLYZED SOY PROTEIN" or "PROTÉINE DE SOYA HYDROLYSÉE" = Soy
-   - Look for allergens in compound ingredients (e.g., in brackets or parentheses)
-   - SULPHITES/SULFITES in English or French = Sulphites allergen
+2. **ALLERGEN DETECTION (COMPREHENSIVE):**
+   - Cross-reference ingredients against Canadian Priority Allergens: ${ALLERGENS_LIST}
+   - Check BOTH English and French text
+   - Examples: "WHEAT FLOUR", "FARINE DE BLÉ" = Wheat | "SOY LECITHIN", "LÉCITHINE DE SOYA" = Soy
+   - Scan for allergens in compound ingredients (text in parentheses/brackets)
+   - List all detected allergens in the "allergens_detected" array
 
-3. **Warning Check:** Scan the ENTIRE label for any "May Contain", "Peut contenir", "Traces of", "Traces de", "Manufactured on equipment that processes" warnings in English or French.
+3. **ALLERGEN WARNING STATEMENTS:**
+   - Scan for specific allergen warning boxes/statements anywhere on the package
+   - Look for: "Contains:", "Contient:", "May contain:", "Peut contenir:", "Traces of:", "Traces de:"
+   - Look for: "Manufactured on equipment that processes...", "Fabriqué dans un établissement qui traite..."
+   - Extract the FULL warning text and add to "allergen_warnings" array
+   - Examples: "Contains: Milk, Soy", "May contain traces of peanuts and tree nuts"
 
-4. **Confidence:** Assign a confidence score (0.0 to 1.0) based on image quality and text clarity.
+4. **CROSS-CONTAMINATION WARNING:**
+   - Set to TRUE if any "may contain", "traces", or "manufactured on shared equipment" warnings found
+   - Set to FALSE if no such warnings present
 
-Return the data ONLY in the required JSON format with all four fields.`;
+5. **DATES EXTRACTION (LOOK EVERYWHERE):**
+   - **Manufacturing Date:** Look for "MFG:", "MFD:", "Manufactured:", "Production Date:", "Produit le:", or date codes
+   - **Expiry Date:** Look for "EXP:", "BB:", "Best Before:", "Meilleur avant:", "Use By:", "Expiry:", "BBD:"
+   - Extract dates in ANY format found (YYYY-MM-DD, DD/MM/YYYY, MM-DD-YY, Julian dates, etc.)
+   - Common locations: Near barcode, on bottom/top of package, on lid/cap, near nutritional panel
+   - If not found, return empty string ""
+
+6. **DIETARY LABELS & CERTIFICATIONS:**
+   - Scan the ENTIRE package for dietary labels, logos, symbols, and certification marks
+   - Common labels to look for: ${DIETARY_LABELS}
+   - Look for certification symbols (organic leaf, kosher symbols, halal symbols, vegan logos)
+   - Look for health claims: "No artificial colors", "Natural", "Whole grain"
+   - Add ALL found labels to "dietary_labels" array
+   - Return empty array [] if none found
+
+7. **PRODUCT & BRAND IDENTIFICATION:**
+   - Extract the main product name (usually large text on front)
+   - Extract the brand name (typically at top of package or near product name)
+   - If not clearly visible, return empty string ""
+
+8. **CONFIDENCE SCORE:**
+   - Assign 0.9-1.0 for clear, high-quality images
+   - Assign 0.7-0.9 for slightly blurry but readable images
+   - Assign 0.5-0.7 for difficult to read images
+   - Assign 0.0-0.5 for very poor quality/unreadable images
+
+**RETURN COMPLETE JSON WITH ALL REQUIRED FIELDS** - use empty strings "" or empty arrays [] for fields where information is not found.`;
 
 
     console.log('📤 Calling Gemini API...');
@@ -101,8 +162,14 @@ Return the data ONLY in the required JSON format with all four fields.`;
 
     console.log('✅ Gemini Vision succeeded!');
     console.log('📝 Ingredients:', data.raw_ingredient_string);
-    console.log('⚠️ Allergens:', data.allergens_detected);
+    console.log('⚠️ Allergens Detected:', data.allergens_detected);
+    console.log('📋 Allergen Warnings:', data.allergen_warnings);
     console.log('🔔 Cross-contamination:', data.cross_contamination_warning);
+    console.log('📅 Manufacturing Date:', data.manufacturing_date);
+    console.log('📅 Expiry Date:', data.expiry_date);
+    console.log('🏷️ Dietary Labels:', data.dietary_labels);
+    console.log('🏢 Product Name:', data.product_name);
+    console.log('🏭 Brand Name:', data.brand_name);
     console.log('📊 Confidence:', data.confidence);
 
     return {
@@ -111,7 +178,13 @@ Return the data ONLY in the required JSON format with all four fields.`;
       confidence: data.confidence || 0.95,
       source: 'Gemini 2.0 Flash (AI-Powered)',
       allergens: data.allergens_detected || [],
+      allergenWarnings: data.allergen_warnings || [],
       crossContaminationWarning: data.cross_contamination_warning || false,
+      manufacturingDate: data.manufacturing_date || '',
+      expiryDate: data.expiry_date || '',
+      dietaryLabels: data.dietary_labels || [],
+      productName: data.product_name || '',
+      brandName: data.brand_name || '',
       structuredData: data
     };
   } catch (error) {

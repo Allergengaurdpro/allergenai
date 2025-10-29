@@ -48,6 +48,13 @@ export default defineConfig({
     })
   ],
   server: {
-    port: 3000
+    host: true, // Allow network access
+    port: 3000,
+    allowedHosts: [
+      '.loca.lt',
+      '.ngrok.io',
+      '.ngrok-free.app',
+      'localhost'
+    ]
   }
 });

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, orderBy, limit } from '../../config/mockFirebase';
-import { db } from '../../config/mockFirebase';
+import { collection, query, where, getDocs, orderBy, limit } from '../../config/firebase';
+import { db } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import ScanningHistory from './ScanningHistory';
@@ -43,18 +43,26 @@ const ReceiverDashboard = () => {
       setAssignedVendors(vendors);
 
       // Load recent sessions
+      // Note: Firestore composite indexes are required for where + orderBy on different fields
+      // For now, we'll fetch all user sessions and sort in memory
       const sessionsQuery = query(
         collection(db, 'scanning_sessions'),
-        where('receiverId', '==', currentUser.uid),
-        orderBy('createdAt', 'desc'),
-        limit(5)
+        where('receiverId', '==', currentUser.uid)
       );
       const sessionsSnapshot = await getDocs(sessionsQuery);
       const sessions = sessionsSnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
-      }));
+      }))
+      .sort((a, b) => {
+        const dateA = new Date(a.createdAt || a.startTime);
+        const dateB = new Date(b.createdAt || b.startTime);
+        return dateB - dateA; // Sort descending (newest first)
+      })
+      .slice(0, 5); // Limit to 5 most recent
+
       setRecentSessions(sessions);
+      console.log('Loaded sessions:', sessions);
 
       // Calculate stats
       const today = new Date();
@@ -152,6 +160,23 @@ const ReceiverDashboard = () => {
       <div className="dashboard-content">
         {activeTab === 'tasks' && (
           <>
+            {/* Quick Start Scanning Button */}
+            <div className="quick-action-section">
+              <button
+                className="btn-quick-scan"
+                onClick={() => navigate('/scan')}
+              >
+                <div className="quick-scan-icon">
+                  <span>📱</span>
+                </div>
+                <div className="quick-scan-content">
+                  <h3>Start Scanning Session</h3>
+                  <p>Scan products and detect allergens quickly</p>
+                </div>
+                <div className="quick-scan-arrow">→</div>
+              </button>
+            </div>
+
             <div className="stats-grid-premium">
               <div className="stat-card-premium stat-primary">
                 <div className="stat-icon-wrapper stat-icon-blue">

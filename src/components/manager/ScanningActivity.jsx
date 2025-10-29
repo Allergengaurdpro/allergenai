@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, orderBy } from '../../config/mockFirebase';
-import { db } from '../../config/mockFirebase';
+import { collection, query, where, getDocs, orderBy } from '../../config/firebase';
+import { db } from '../../config/firebase';
 
 const ScanningActivity = ({ location }) => {
   const [sessions, setSessions] = useState([]);

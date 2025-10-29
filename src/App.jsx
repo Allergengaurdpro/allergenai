@@ -2,11 +2,15 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Login from './components/Login';
+import Signup from './components/Signup';
 import ManagerDashboard from './components/manager/ManagerDashboard';
 import ReceiverDashboard from './components/receiver/ReceiverDashboard';
 import ScanningSession from './components/receiver/ScanningSession';
 import SessionReview from './components/SessionReview';
-import Navigation from './components/Navigation';
+import Sidebar from './components/Sidebar';
+import ScanningHistory from './components/receiver/ScanningHistory';
+import MyAllergens from './components/receiver/MyAllergens';
+import AllergenEducation from './components/AllergenEducation';
 import './styles/App.css';
 
 // Protected Route Component
@@ -43,13 +47,19 @@ function AppContent() {
   return (
     <Router>
       <div className="app">
-        {currentUser && <Navigation />}
-        <div className="app-content">
+        {currentUser && <Sidebar />}
+        <div className={`app-content ${currentUser ? 'with-sidebar' : ''}`}>
           <Routes>
             <Route
               path="/login"
               element={
                 currentUser ? <Navigate to="/dashboard" /> : <Login />
+              }
+            />
+            <Route
+              path="/signup"
+              element={
+                currentUser ? <Navigate to="/dashboard" /> : <Signup />
               }
             />
             <Route
@@ -65,6 +75,30 @@ function AppContent() {
               element={
                 <ProtectedRoute requiredRole="receiver">
                   <ScanningSession />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/history"
+              element={
+                <ProtectedRoute requiredRole="receiver">
+                  <ScanningHistory />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/my-allergens"
+              element={
+                <ProtectedRoute requiredRole="receiver">
+                  <MyAllergens />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/allergen-guide"
+              element={
+                <ProtectedRoute requiredRole="receiver">
+                  <AllergenEducation />
                 </ProtectedRoute>
               }
             />

@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { ref, uploadBytes, getDownloadURL } from '../../config/mockFirebase';
-import { storage } from '../../config/mockFirebase';
+import { ref, uploadBytes, getDownloadURL } from '../../config/firebase';
+import { storage } from '../../config/firebase';
 import { extractTextFromImage, parseIngredients, extractIngredientsSection } from '../../utils/ocrService';
 import { extractTextWithDocumentDetection } from '../../utils/googleVisionOCR';
 import { GOOGLE_VISION_API_KEY, hasGoogleVisionKey } from '../../config/apiKeys';
@@ -17,6 +17,7 @@ const ProductForm = ({ product, onSave, onClose }) => {
   const [isFromOpenFoodFacts, setIsFromOpenFoodFacts] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const fileInputRef = useRef(null);
+  const imagePreviewRef = useRef(null); // Track object URL for cleanup
 
   // Check if data is from Open Food Facts
   React.useEffect(() => {
@@ -25,20 +26,135 @@ const ProductForm = ({ product, onSave, onClose }) => {
     }
   }, []);
 
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setImageFile(file);
-      setImagePreview(URL.createObjectURL(file));
-      setOcrResult(null); // Reset OCR result when new image is selected
+  // Cleanup object URL when component unmounts
+  React.useEffect(() => {
+    return () => {
+      cleanupImagePreview();
+    };
+  }, []);
+
+  // Cleanup object URL
+  const cleanupImagePreview = () => {
+    if (imagePreviewRef.current) {
+      URL.revokeObjectURL(imagePreviewRef.current);
+      imagePreviewRef.current = null;
     }
   };
 
-  const handleCameraCapture = (file, imageUrl) => {
-    setImageFile(file);
-    setImagePreview(imageUrl);
-    setShowCamera(false);
-    setOcrResult(null);
+  // Compress image to prevent memory issues on mobile
+  const compressImage = (file) => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          // Create canvas for compression
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+
+          // Detect if mobile device
+          const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+          // Set max dimensions (smaller for mobile)
+          const maxWidth = isMobile ? 1280 : 1920;
+          const maxHeight = isMobile ? 1280 : 1920;
+
+          let width = img.width;
+          let height = img.height;
+
+          // Calculate new dimensions
+          if (width > height) {
+            if (width > maxWidth) {
+              height = (height * maxWidth) / width;
+              width = maxWidth;
+            }
+          } else {
+            if (height > maxHeight) {
+              width = (width * maxHeight) / height;
+              height = maxHeight;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+
+          // Draw and compress
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Convert to blob with compression (70% quality for mobile)
+          canvas.toBlob(
+            (blob) => {
+              const compressedFile = new File([blob], file.name, {
+                type: 'image/jpeg',
+                lastModified: Date.now(),
+              });
+              resolve(compressedFile);
+            },
+            'image/jpeg',
+            isMobile ? 0.7 : 0.85
+          );
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleImageChange = async (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Cleanup previous preview
+      cleanupImagePreview();
+
+      // Show loading state
+      setProcessing(true);
+
+      try {
+        // Compress image first
+        const compressedFile = await compressImage(file);
+
+        const objectUrl = URL.createObjectURL(compressedFile);
+        imagePreviewRef.current = objectUrl;
+
+        setImageFile(compressedFile);
+        setImagePreview(objectUrl);
+        setOcrResult(null); // Reset OCR result when new image is selected
+      } catch (error) {
+        console.error('Error processing image:', error);
+        alert('Failed to process image. Please try again.');
+      } finally {
+        setProcessing(false);
+      }
+    }
+  };
+
+  const handleCameraCapture = async (file, imageUrl) => {
+    // Cleanup previous preview if it was an object URL
+    cleanupImagePreview();
+
+    // Cleanup the temporary URL from camera
+    URL.revokeObjectURL(imageUrl);
+
+    // Show loading state
+    setProcessing(true);
+
+    try {
+      // Camera already compresses, but let's ensure consistent sizing
+      const compressedFile = await compressImage(file);
+
+      const objectUrl = URL.createObjectURL(compressedFile);
+      imagePreviewRef.current = objectUrl;
+
+      setImageFile(compressedFile);
+      setImagePreview(objectUrl);
+      setShowCamera(false);
+      setOcrResult(null);
+    } catch (error) {
+      console.error('Error processing camera image:', error);
+      alert('Failed to process image. Please try again.');
+    } finally {
+      setProcessing(false);
+    }
   };
 
   const handleOCR = async () => {
@@ -64,6 +180,7 @@ const ProductForm = ({ product, onSave, onClose }) => {
       if (result.success) {
         console.log('OCR Success! Raw Text:', result.text);
         console.log('Source:', result.source || 'Tesseract.js');
+        console.log('Full OCR Result:', result);
 
         // Check if we're using Gemini's structured output
         let ingredientText;
@@ -78,19 +195,57 @@ const ProductForm = ({ product, onSave, onClose }) => {
         }
 
         const parsed = parseIngredients(result.text);
-        setOcrResult(parsed);
+        setOcrResult(result); // Store full OCR result including all extracted data
 
-        // Auto-fill form with extracted text
-        setFormData({
+        // Auto-fill form with ALL extracted data
+        const updatedFormData = {
           ...formData,
           ingredients: ingredientText
-        });
+        };
 
+        // Auto-fill product name if extracted and current form has empty name
+        if (result.productName && !formData.productName) {
+          updatedFormData.productName = result.productName;
+        }
+
+        // Auto-fill brand if extracted and current form has empty brand
+        if (result.brandName && !formData.brand) {
+          updatedFormData.brand = result.brandName;
+        }
+
+        // Store additional metadata
+        updatedFormData.manufacturingDate = result.manufacturingDate || formData.manufacturingDate || '';
+        updatedFormData.expiryDate = result.expiryDate || formData.expiryDate || '';
+        updatedFormData.dietaryLabels = result.dietaryLabels || formData.dietaryLabels || [];
+        updatedFormData.allergenWarnings = result.allergenWarnings || formData.allergenWarnings || [];
+
+        setFormData(updatedFormData);
+
+        // Build detailed success message
         const source = result.source || 'Tesseract.js';
         const extractionMethod = result.structuredData
-          ? 'AI-powered extraction with allergen detection'
-          : 'Smart filtering applied - only ingredients section extracted';
-        alert(`✅ Ingredients extracted successfully!\n\nSource: ${source}\nConfidence: ${(result.confidence * 100).toFixed(1)}%\n\n📝 ${extractionMethod}\n\nPlease review and edit if needed.`);
+          ? 'AI-powered comprehensive analysis'
+          : 'Smart filtering applied';
+
+        let successMessage = `✅ Label Analysis Complete!\n\nSource: ${source}\nConfidence: ${(result.confidence * 100).toFixed(1)}%\n\n📝 ${extractionMethod}\n`;
+
+        if (result.structuredData) {
+          const details = [];
+          if (result.productName) details.push(`📦 Product: ${result.productName}`);
+          if (result.brandName) details.push(`🏢 Brand: ${result.brandName}`);
+          if (result.allergens && result.allergens.length > 0) details.push(`⚠️ Allergens: ${result.allergens.join(', ')}`);
+          if (result.allergenWarnings && result.allergenWarnings.length > 0) details.push(`🔔 Warnings: ${result.allergenWarnings.length} found`);
+          if (result.dietaryLabels && result.dietaryLabels.length > 0) details.push(`🏷️ Labels: ${result.dietaryLabels.join(', ')}`);
+          if (result.manufacturingDate) details.push(`📅 Mfg: ${result.manufacturingDate}`);
+          if (result.expiryDate) details.push(`📅 Exp: ${result.expiryDate}`);
+
+          if (details.length > 0) {
+            successMessage += '\n' + details.join('\n');
+          }
+        }
+
+        successMessage += '\n\nPlease review and edit if needed.';
+        alert(successMessage);
       } else {
         console.error('OCR Failed:', result.error);
         alert('❌ Failed to extract text:\n\n' + (result.error || 'No text detected. Please ensure the image is clear and well-lit.'));
@@ -209,6 +364,7 @@ const ProductForm = ({ product, onSave, onClose }) => {
                     type="button"
                     className="btn-remove-img"
                     onClick={() => {
+                      cleanupImagePreview();
                       setImageFile(null);
                       setImagePreview(null);
                       setOcrResult(null);
@@ -223,7 +379,6 @@ const ProductForm = ({ product, onSave, onClose }) => {
                 ref={fileInputRef}
                 onChange={handleImageChange}
                 accept="image/*"
-                capture="environment"
                 style={{ display: 'none' }}
               />
 
@@ -322,6 +477,56 @@ const ProductForm = ({ product, onSave, onClose }) => {
                 <p className="compliance-note">
                   Enhanced Labelling Requirements (2012) - Federal Food and Drug Regulations
                 </p>
+              </div>
+            </div>
+          )}
+
+          {/* Allergen Warnings from OCR */}
+          {ocrResult && ocrResult.allergenWarnings && ocrResult.allergenWarnings.length > 0 && (
+            <div className="extracted-info-box allergen-warnings-box">
+              <h4>🔔 Allergen Warnings on Label</h4>
+              <div className="warnings-list">
+                {ocrResult.allergenWarnings.map((warning, index) => (
+                  <div key={index} className="warning-item">
+                    <span className="warning-icon">⚠️</span>
+                    <span className="warning-text">{warning}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Dietary Labels/Certifications */}
+          {ocrResult && ocrResult.dietaryLabels && ocrResult.dietaryLabels.length > 0 && (
+            <div className="extracted-info-box dietary-labels-box">
+              <h4>🏷️ Dietary Labels & Certifications</h4>
+              <div className="dietary-tags">
+                {ocrResult.dietaryLabels.map((label, index) => (
+                  <span key={index} className="dietary-tag">
+                    {label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Manufacturing and Expiry Dates */}
+          {ocrResult && (ocrResult.manufacturingDate || ocrResult.expiryDate) && (
+            <div className="extracted-info-box dates-box">
+              <h4>📅 Product Dates</h4>
+              <div className="dates-info">
+                {ocrResult.manufacturingDate && (
+                  <div className="date-item">
+                    <span className="date-label">Manufacturing:</span>
+                    <span className="date-value">{ocrResult.manufacturingDate}</span>
+                  </div>
+                )}
+                {ocrResult.expiryDate && (
+                  <div className="date-item">
+                    <span className="date-label">Expiry/Best Before:</span>
+                    <span className="date-value">{ocrResult.expiryDate}</span>
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc } from '../../config/mockFirebase';
-import { db } from '../../config/mockFirebase';
+import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc } from '../../config/firebase';
+import { db } from '../../config/firebase';
 
 const VendorManagement = ({ location }) => {
   const [vendors, setVendors] = useState([]);
